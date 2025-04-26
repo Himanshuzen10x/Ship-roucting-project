@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ship Routing A* Basic Working</title>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    #map { height: 100vh; width: 100vw; }
+    .ship-icon { font-size: 24px; }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+const map = L.map('map').setView([20, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: 'Map data © OpenStreetMap contributors'
+}).addTo(map);
+
+const gridSize = 5; // degrees
+const grid = {};
+let startPoint = null;
+let endPoint = null;
+
+function latLngKey(lat, lng) {
+  return `${lat}_${lng}`;
+}
+
+function drawGrid() {
+  const bounds = map.getBounds();
+  const latStart = Math.floor(bounds.getSouth());
+  const latEnd = Math.ceil(bounds.getNorth());
+  const lngStart = Math.floor(bounds.getWest());
+  const lngEnd = Math.ceil(bounds.getEast());
+
+  for (let lat = latStart; lat < latEnd; lat += gridSize) {
+    for (let lng = lngStart; lng < lngEnd; lng += gridSize) {
+      const key = latLngKey(lat, lng);
+      const isLand = Math.random() < 0.2; // simulate land 20%
+
+      grid[key] = { lat, lng, isLand };
+
+      L.rectangle([
+        [lat, lng],
+        [lat + gridSize, lng + gridSize]
+      ], {
+        color: isLand ? 'red' : 'green',
+        weight: 1,
+        fillOpacity: 0.2
+      }).addTo(map);
+    }
+  }
+}
+
+function getNeighbors(node) {
+  const dirs = [
+    [gridSize, 0], [-gridSize, 0],
+    [0, gridSize], [0, -gridSize],
+    [gridSize, gridSize], [-gridSize, -gridSize],
+    [gridSize, -gridSize], [-gridSize, gridSize]
+  ];
+
+  const neighbors = [];
+  for (const [dLat, dLng] of dirs) {
+    const lat = node.lat + dLat;
+    const lng = node.lng + dLng;
+    const key = latLngKey(lat, lng);
+    if (grid[key] && !grid[key].isLand) {
+      neighbors.push(grid[key]);
+    }
+  }
+  return neighbors;
+}
+
+function heuristic(a, b) {
+  return Math.sqrt((a.lat - b.lat) ** 2 + (a.lng - b.lng) ** 2);
+}
+
+function aStar(start, end) {
+  const openSet = [start];
+  const cameFrom = {};
+
+  const gScore = {};
+  const fScore = {};
+
+  for (const key in grid) {
+    gScore[key] = Infinity;
+    fScore[key] = Infinity;
+  }
+
+  gScore[latLngKey(start.lat, start.lng)] = 0;
+  fScore[latLngKey(start.lat, start.lng)] = heuristic(start, end);
+
+  while (openSet.length > 0) {
+    openSet.sort((a, b) => fScore[latLngKey(a.lat, a.lng)] - fScore[latLngKey(b.lat, b.lng)]);
+    const current = openSet.shift();
+
+    if (current.lat === end.lat && current.lng === end.lng) {
+      const path = [];
+      let temp = latLngKey(end.lat, end.lng);
+      while (cameFrom[temp]) {
+        path.unshift(grid[temp]);
+        temp = cameFrom[temp];
+      }
+      path.unshift(start);
+      return path;
+    }
+
+    for (const neighbor of getNeighbors(current)) {
+      const tentativeG = gScore[latLngKey(current.lat, current.lng)] + heuristic(current, neighbor);
+      if (tentativeG < gScore[latLngKey(neighbor.lat, neighbor.lng)]) {
+        cameFrom[latLngKey(neighbor.lat, neighbor.lng)] = latLngKey(current.lat, current.lng);
+        gScore[latLngKey(neighbor.lat, neighbor.lng)] = tentativeG;
+        fScore[latLngKey(neighbor.lat, neighbor.lng)] = tentativeG + heuristic(neighbor, end);
+        if (!openSet.includes(neighbor)) {
+          openSet.push(neighbor);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function animateShip(path) {
+  let i = 0;
+  const shipIcon = L.divIcon({ className: 'ship-icon', html: '🚢' });
+  const ship = L.marker([path[0].lat + gridSize / 2, path[0].lng + gridSize / 2], { icon: shipIcon }).addTo(map);
+
+  const interval = setInterval(() => {
+    if (i >= path.length) {
+      clearInterval(interval);
+      return;
+    }
+    ship.setLatLng([path[i].lat + gridSize / 2, path[i].lng + gridSize / 2]);
+    i++;
+  }, 300);
+}
+
+drawGrid();
+
+map.on('click', function(e) {
+  const lat = Math.floor(e.latlng.lat / gridSize) * gridSize;
+  const lng = Math.floor(e.latlng.lng / gridSize) * gridSize;
+  const key = latLngKey(lat, lng);
+
+  if (!grid[key]) {
+    alert("Clicked outside grid!");
+    return;
+  }
+  if (grid[key].isLand) {
+    alert("Cannot start/end on land!");
+    return;
+  }
+
+  if (!startPoint) {
+    startPoint = grid[key];
+    L.marker([lat + gridSize / 2, lng + gridSize / 2], { title: "Start" }).addTo(map);
+  } else if (!endPoint) {
+    endPoint = grid[key];
+    L.marker([lat + gridSize / 2, lng + gridSize / 2], { title: "End" }).addTo(map);
+
+    const path = aStar(startPoint, endPoint);
+    if (path) {
+      const latlngs = path.map(p => [p.lat + gridSize / 2, p.lng + gridSize / 2]);
+      L.polyline(latlngs, { color: 'blue' }).addTo(map);
+      animateShip(path);
+    } else {
+      alert("No path found!");
+    }
+  }
+});
+</script>
+
+</body>
+</html>
