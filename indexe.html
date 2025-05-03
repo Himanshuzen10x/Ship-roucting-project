@@ -7,16 +7,49 @@
   <style>
     #map { height: 100vh; width: 100vw; }
     .ship-icon { font-size: 24px; }
+
+    #map { height: 100vh; width: 100vw; }
+  #info-panel {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 250px;
+    padding: 10px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0px 0px 10px rgba(0,0,0,0.3);
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    z-index: 999;
+  }
   </style>
 </head>
 <body>
-
+  <div id="info-panel">
+    <b>Path Info:</b><br>
+    <b>Total Distance:</b> -- <br>
+    <b>Total Distance (NM):</b> -- <br>
+    <b>Fuel Burned:</b> -- <br>
+    <b>ETA:</b> -- <br>
+    
+    <div style="margin-top:10px;">
+      <b>Fuel Burn Progress:</b>
+      <div style="background:#ccc; border-radius:10px; overflow:hidden;">
+        <div id="fuel-progress" style="background:linear-gradient(to right, orange , red); width:0%; height:15px;"></div>
+      </div>
+    </div>
+  </div>
+  
 <div id="map"></div>
 
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
 
 <script>
+let totalDistanceKm = 0;
+let totalDistanceNauticalMiles = 0;
+let totalEstimatedFuel = 0;
+
 let map = L.map('map').setView([20, 0], 2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
 
@@ -185,22 +218,77 @@ function reconstructPath(node) {
     node = node.parent;
   }
   path.reverse();
-  
-  pathLine = L.polyline(path, { color: 'blue' }).addTo(map);
-  animateShip(path);
+
+  const smoothedPath = turf.bezierSpline(turf.lineString(path.map(p => [p[1], p[0]])));
+  const smoothedCoordinates = smoothedPath.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+
+  pathLine = L.polyline(smoothedCoordinates, { color: 'blue', weight: 3 }).addTo(map);
+
+  // Calculate
+  totalDistanceKm = 0;
+  for (let i = 0; i < smoothedCoordinates.length - 1; i++) {
+    const from = turf.point([smoothedCoordinates[i][1], smoothedCoordinates[i][0]]);
+    const to = turf.point([smoothedCoordinates[i+1][1], smoothedCoordinates[i+1][0]]);
+    const distance = turf.distance(from, to, { units: 'kilometers' });
+    totalDistanceKm += distance;
+  }
+  totalDistanceNauticalMiles = totalDistanceKm * 0.539957;
+  totalEstimatedFuel = totalDistanceKm * 0.25; // Example consumption
+
+  animateShip(smoothedCoordinates);
 }
+
+
+
 
 function animateShip(path) {
   let shipIcon = L.divIcon({ className: 'ship-icon', html: '🚢' });
   shipMarker = L.marker(path[0], { icon: shipIcon }).addTo(map);
 
+  const shipSpeedKmph = 30; // Assume average ship speed = 30 km/h
   let i = 0;
+  let totalSteps = path.length;
+  let fuelPerStep = totalEstimatedFuel / totalSteps;
+  let distancePerStep = totalDistanceKm / totalSteps;
+  let burnedFuel = 0;
+  let traveledDistance = 0;
+
   let interval = setInterval(() => {
     if (i >= path.length) { clearInterval(interval); return; }
     shipMarker.setLatLng(path[i]);
+
+    burnedFuel += fuelPerStep;
+    traveledDistance += distancePerStep;
+
+    // Update fuel progress bar
+    let fuelProgressPercent = (burnedFuel / totalEstimatedFuel) * 100;
+    document.getElementById('fuel-progress').style.width = `${fuelProgressPercent}%`;
+
+    // Calculate ETA
+    let remainingDistance = totalDistanceKm - traveledDistance;
+    let etaHours = remainingDistance / shipSpeedKmph;
+    let etaFormatted = `${Math.floor(etaHours)} hr ${Math.round((etaHours - Math.floor(etaHours)) * 60)} min`;
+
+    // Update info-panel live
+    document.getElementById('info-panel').innerHTML = `
+      <b>Path Info:</b><br>
+      <b>Total Distance:</b> ${totalDistanceKm.toFixed(2)} km <br>
+      <b>Total Distance (NM):</b> ${totalDistanceNauticalMiles.toFixed(2)} NM <br>
+      <b>Fuel Burned:</b> ${burnedFuel.toFixed(2)} tons / ${totalEstimatedFuel.toFixed(2)} tons<br>
+      <b>ETA:</b> ${etaFormatted}<br>
+
+      <div style="margin-top:10px;">
+        <b>Fuel Burn Progress:</b>
+        <div style="background:#ccc; border-radius:10px; overflow:hidden;">
+          <div id="fuel-progress" style="background:linear-gradient(to right, orange , red); width:${fuelProgressPercent}%; height:15px;"></div>
+        </div>
+      </div>
+    `;
+
     i++;
   }, 300);
 }
+
 </script>
 
 </body>
